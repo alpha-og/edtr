@@ -1,16 +1,16 @@
 mod terminal;
-use std::cmp::min;
-
 use terminal::{Position, Size, Terminal};
+
+mod view;
+use view::View;
+
+use std::cmp::min;
 
 use crossterm::event::{
     read,
-    Event::{self, Key},
+    Event::{self, Key, Resize},
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-
-const NAME: &str = env!("CARGO_PKG_NAME");
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Copy, Clone, Default)]
 struct Location {
@@ -21,24 +21,51 @@ struct Location {
 pub struct Editor {
     should_quit: bool,
     location: Location,
+    view: View,
 }
 
 impl Editor {
-    fn repl(&mut self) -> Result<(), std::io::Error> {
+    pub fn new() -> Result<Self, std::io::Error> {
+        let current_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let _ = Terminal::terminate();
+            current_hook(panic_info);
+        }));
+        Terminal::initialize()?;
+        let mut view = View::default();
+
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(arg) = args.get(1) {
+            view.load(&arg.to_string())?;
+        }
+        Ok(Self {
+            view,
+            should_quit: false,
+            location: Default::default(),
+        })
+    }
+
+    pub fn run(&mut self) {
         loop {
-            self.refresh_screen()?;
+            self.refresh_screen();
             if self.should_quit {
                 break;
             }
 
-            let event = read()?;
-            self.evaluate_event(&event)?;
+            match read() {
+                Ok(event) => self.evaluate_event(event),
+                Err(err) => {
+                    #[cfg(debug_assertions)]
+                    {
+                        panic!("Unable to read event {err:?}")
+                    }
+                }
+            }
         }
-        Ok(())
     }
-    fn move_point(&mut self, key_code: KeyCode) -> Result<(), std::io::Error> {
+    fn move_point(&mut self, key_code: KeyCode) {
         let Location { mut x, mut y } = self.location;
-        let Size { width, height } = Terminal::size()?;
+        let Size { width, height } = Terminal::size().unwrap_or_default();
         match key_code {
             KeyCode::Up => {
                 y = y.saturating_sub(1);
@@ -67,20 +94,17 @@ impl Editor {
             _ => {}
         }
         self.location = Location { x, y };
-        Ok(())
     }
-
-    fn evaluate_event(&mut self, event: &Event) -> Result<(), std::io::Error> {
-        if let Key(KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) = event
-        {
-            match code {
+    fn evaluate_event(&mut self, event: Event) {
+        match event {
+            Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            }) => match code {
                 KeyCode::Char('q') => {
-                    if KeyModifiers::CONTROL == *modifiers {
+                    if KeyModifiers::CONTROL == modifiers {
                         self.should_quit = true;
                     }
                 }
@@ -92,64 +116,39 @@ impl Editor {
                 | KeyCode::PageUp
                 | KeyCode::End
                 | KeyCode::Home => {
-                    self.move_point(*code)?;
+                    self.move_point(code);
                 }
                 _ => {}
+            },
+            Resize(width, height) => {
+                let width = width as usize;
+                let height = height as usize;
+                self.view.resize(Size { width, height });
             }
+            _ => {}
         }
-        Ok(())
     }
-
-    fn refresh_screen(&self) -> Result<(), std::io::Error> {
-        if !self.should_quit {
-            Self::draw_rows(self)?;
+    fn refresh_screen(&mut self) {
+        let _ = Terminal::hide_caret();
+        let _ = Terminal::move_caret_to(Default::default());
+        if self.should_quit {
+        } else {
+            let _ = self.view.render();
+            let _ = Terminal::move_caret_to(Position {
+                col: self.location.x,
+                row: self.location.y,
+            });
         }
-        Ok(())
+        let _ = Terminal::show_caret();
+        let _ = Terminal::flush_buffer();
     }
+}
 
-    fn draw_rows(&self) -> Result<(), std::io::Error> {
-        Terminal::hide_caret()?;
-
-        let terminal::Size { height, .. } = Terminal::size()?;
-        for y in 0..height {
-            Self::draw_empty_row(y)?;
-            if y == height / 3 {
-                Self::draw_wlcm_msg()?;
-            }
-            if y.saturating_add(1) < height {
-                Terminal::print(String::from("\r\n"))?;
-            }
-        }
-        Terminal::move_caret_to(Position {
-            col: self.location.x,
-            row: self.location.y,
-        })?;
-        Terminal::show_caret()?;
-        Ok(())
-    }
-    fn draw_empty_row(row: usize) -> Result<(), std::io::Error> {
-        Terminal::move_caret_to(Position { col: 0, row })?;
-        Terminal::clear_line()?;
-        Terminal::print(String::from("~"))
-    }
-    fn draw_wlcm_msg() -> Result<(), std::io::Error> {
-        let terminal::Size { width, height } = Terminal::size()?;
-        let mut msg = format!("Welcome to {NAME} -- version {VERSION}");
-        msg.truncate(width - 2);
-        let length = msg.len();
-        let padding_left = (width.saturating_sub(length)) / 2;
-        let padding_top = height / 3;
-        Terminal::move_caret_to(Position {
-            col: padding_left,
-            row: padding_top,
-        })?;
-        Terminal::print(msg)
-    }
-
-    pub fn run(&mut self) {
-        Terminal::initialize().unwrap();
-        let result = self.repl();
-        Terminal::terminate().unwrap();
-        result.unwrap();
+impl Drop for Editor {
+    fn drop(&mut self) {
+        let _ = Terminal::terminate();
+        let _ = Terminal::clear_screen();
+        let _ = Terminal::print("Bye!\r\n");
+        let _ = Terminal::flush_buffer();
     }
 }
