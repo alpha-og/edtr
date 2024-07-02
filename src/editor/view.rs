@@ -1,16 +1,26 @@
 mod buffer;
 
 use buffer::Buffer;
+use crossterm::event::KeyCode;
+use std::cmp::min;
 
-use super::terminal::{Position, Size, Terminal};
+use super::terminal::{Size, Terminal};
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Copy, Clone, Default)]
+pub struct Location {
+    pub x: usize,
+    pub y: usize,
+}
 
 pub struct View {
     buffer: Buffer,
     redraw: bool,
     size: Size,
+    pub location: Location,
+    pub scroll_offset: Location,
 }
 
 impl Default for View {
@@ -19,6 +29,8 @@ impl Default for View {
             buffer: Default::default(),
             redraw: true,
             size: Terminal::size().unwrap_or_default(),
+            location: Default::default(),
+            scroll_offset: Default::default(),
         }
     }
 }
@@ -61,5 +73,37 @@ impl View {
     pub fn resize(&mut self, size: Size) {
         self.size = size;
         self.redraw = true;
+    }
+    pub fn move_point(&mut self, key_code: KeyCode) {
+        let Location { mut x, mut y } = self.location;
+        let Size { width, height } = Terminal::size().unwrap_or_default();
+        match key_code {
+            KeyCode::Up => {
+                y = y.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                y = min(height.saturating_sub(1), y.saturating_add(1));
+            }
+            KeyCode::Left => {
+                x = x.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                x = min(width.saturating_sub(1), x.saturating_add(1));
+            }
+            KeyCode::PageUp => {
+                y = 0;
+            }
+            KeyCode::PageDown => {
+                y = height.saturating_sub(1);
+            }
+            KeyCode::Home => {
+                x = 0;
+            }
+            KeyCode::End => {
+                x = width.saturating_sub(1);
+            }
+            _ => {}
+        }
+        self.location = Location { x, y };
     }
 }
