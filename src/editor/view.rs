@@ -2,7 +2,10 @@ mod buffer;
 mod line;
 mod location;
 
+use std::cmp::min;
+
 use buffer::Buffer;
+use line::Line;
 use location::Location;
 
 use super::{
@@ -77,32 +80,53 @@ impl View {
     }
     fn move_text_location(&mut self, direction: &Direction) {
         let Location { mut x, mut y } = self.location;
-        let Size { width, height } = self.size;
-        self.scroll_location_into_view();
+        let Size { height, .. } = self.size;
         match direction {
             Direction::Up => {
                 y = y.saturating_sub(1);
+                if let Some(line) = self.buffer.lines.get(y) {
+                    x = min(x, line.len().saturating_sub(1));
+                }
             }
             Direction::Down => {
-                y = y.saturating_add(1);
+                if y.saturating_add(1) >= self.buffer.lines.len() {
+                    x = 0;
+                    y = y.saturating_add(1);
+                } else {
+                    y = y.saturating_add(1);
+                    if let Some(line) = self.buffer.lines.get(y) {
+                        x = min(x, line.len().saturating_sub(1));
+                    }
+                }
             }
             Direction::Left => {
-                x = x.saturating_sub(1);
+                if x == 0 {
+                    if let Some(line) = self.buffer.lines.get(y - 1) {
+                        y = y.saturating_sub(1);
+                        x = line.len().saturating_sub(1);
+                    }
+                } else {
+                    x = x.saturating_sub(1);
+                }
             }
-            Direction::Right => x = x.saturating_add(1),
-            Direction::PageUp => {
-                y = 0;
+            Direction::Right => {
+                if let Some(line) = self.buffer.lines.get(y) {
+                    if x >= line.len() {
+                        y = y.saturating_add(1);
+                        x = 0;
+                    } else {
+                        x = min(x.saturating_add(1), line.len());
+                    }
+                } else {
+                    x = 0;
+                }
             }
-            Direction::PageDown => {
-                y = height.saturating_sub(1);
-            }
-            Direction::Home => {
-                x = 0;
-            }
-            Direction::End => {
-                x = width.saturating_sub(1);
-            }
+            Direction::PageUp => y = y.saturating_sub(height).saturating_sub(1),
+            Direction::PageDown => y = y.saturating_add(height).saturating_sub(1),
+            Direction::Home => x = 0,
+            Direction::End => x = self.buffer.lines.get(y).map_or(0, Line::len),
         }
+        y = min(y, self.buffer.lines.len());
         self.location = Location { x, y };
         self.scroll_location_into_view();
     }
