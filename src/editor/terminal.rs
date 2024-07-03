@@ -77,12 +77,10 @@ impl Terminal {
         Self::queue_command(EnterAlternateScreen)?;
         Ok(())
     }
-    pub fn print_row(row: usize, width: usize, content: &str) -> Result<(), std::io::Error> {
-        let mut content = String::from(content);
-        content.truncate(width);
+    pub fn print_row(row: usize, content: &str) -> Result<(), std::io::Error> {
         Terminal::move_caret_to(Position { col: 0, row })?;
         Terminal::clear_line()?;
-        Terminal::print(&content)?;
+        Terminal::print(&String::from(content))?;
         Ok(())
     }
 }

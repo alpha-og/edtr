@@ -1,14 +1,13 @@
 mod terminal;
-use terminal::{Position, Size, Terminal};
+use terminal::Terminal;
 
 mod view;
 use view::View;
 
-use crossterm::event::{
-    read,
-    Event::{self, Key, Resize},
-    KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+mod editorcommand;
+use editorcommand::EditorCommand;
+
+use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
 
 #[derive(Default)]
 pub struct Editor {
@@ -55,36 +54,33 @@ impl Editor {
         }
     }
     fn evaluate_event(&mut self, event: Event) {
-        match event {
-            Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            }) => match code {
-                KeyCode::Char('q') => {
-                    if KeyModifiers::CONTROL == modifiers {
+        let should_process = match &event {
+            Event::Key(KeyEvent { kind, .. }) => *kind == KeyEventKind::Press,
+            Event::Resize(_, _) => true,
+            _ => false,
+        };
+
+        if should_process {
+            match EditorCommand::try_from(event) {
+                Ok(command) => {
+                    if matches!(command, EditorCommand::Quit) {
                         self.should_quit = true;
+                    } else {
+                        self.view.handle_command(command);
                     }
                 }
-                KeyCode::Up
-                | KeyCode::Down
-                | KeyCode::Left
-                | KeyCode::Right
-                | KeyCode::PageDown
-                | KeyCode::PageUp
-                | KeyCode::End
-                | KeyCode::Home => {
-                    self.view.move_point(code);
+                Err(err) => {
+                    #[cfg(debug_assertions)]
+                    {
+                        panic!("Could not handle command: {err:?}");
+                    }
                 }
-                _ => {}
-            },
-            Resize(width, height) => {
-                let width = width as usize;
-                let height = height as usize;
-                self.view.resize(Size { width, height });
             }
-            _ => {}
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                panic!("Received and discarded unsupported or non-press event.");
+            }
         }
     }
     fn refresh_screen(&mut self) {
@@ -93,10 +89,7 @@ impl Editor {
         if self.should_quit {
         } else {
             let _ = self.view.render();
-            let _ = Terminal::move_caret_to(Position {
-                col: self.view.location.x,
-                row: self.view.location.y,
-            });
+            let _ = Terminal::move_caret_to(self.view.get_position());
         }
         let _ = Terminal::show_caret();
         let _ = Terminal::flush_buffer();

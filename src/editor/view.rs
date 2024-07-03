@@ -1,26 +1,24 @@
 mod buffer;
+mod line;
+mod location;
 
 use buffer::Buffer;
-use crossterm::event::KeyCode;
-use std::cmp::min;
+use location::Location;
 
-use super::terminal::{Size, Terminal};
+use super::{
+    editorcommand::{Direction, EditorCommand},
+    terminal::{Position, Size, Terminal},
+};
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(Copy, Clone, Default)]
-pub struct Location {
-    pub x: usize,
-    pub y: usize,
-}
 
 pub struct View {
     buffer: Buffer,
     redraw: bool,
     size: Size,
-    pub location: Location,
-    pub scroll_offset: Location,
+    location: Location,
+    scroll_offset: Location,
 }
 
 impl Default for View {
@@ -41,19 +39,22 @@ impl View {
         if !self.redraw || height == 0 || width == 0 {
             return;
         }
+        let top = self.scroll_offset.y;
         for row in 0..height {
-            if let Some(line) = self.buffer.lines.get(row) {
-                self.render_line(row, line);
+            if let Some(line) = self.buffer.lines.get(row.saturating_add(top)) {
+                let left = self.scroll_offset.x;
+                let right = self.scroll_offset.x.saturating_add(width);
+                Self::render_line(row, &line.get(left..right));
             } else if self.buffer.is_empty() && row == height / 3 {
-                self.render_line(row, &Self::generate_welcome_message(width));
+                Self::render_line(row, &Self::generate_welcome_message(width));
             } else {
-                self.render_line(row, "~");
+                Self::render_line(row, "~");
             }
         }
         self.redraw = false;
     }
-    fn render_line(&self, row: usize, content: &str) {
-        let result = Terminal::print_row(row, self.size.width, content);
+    fn render_line(row: usize, content: &str) {
+        let result = Terminal::print_row(row, content);
         debug_assert!(result.is_ok(), "Failed to render line");
     }
     fn generate_welcome_message(width: usize) -> String {
@@ -66,44 +67,77 @@ impl View {
     pub fn load(&mut self, file_path: &str) -> Result<(), std::io::Error> {
         if let Ok(buffer) = Buffer::load(file_path) {
             self.buffer = buffer;
+            self.redraw = true;
         }
-        self.redraw = true;
         Ok(())
     }
     pub fn resize(&mut self, size: Size) {
         self.size = size;
         self.redraw = true;
     }
-    pub fn move_point(&mut self, key_code: KeyCode) {
+    fn move_text_location(&mut self, direction: &Direction) {
         let Location { mut x, mut y } = self.location;
-        let Size { width, height } = Terminal::size().unwrap_or_default();
-        match key_code {
-            KeyCode::Up => {
+        let Size { width, height } = self.size;
+        self.scroll_location_into_view();
+        match direction {
+            Direction::Up => {
                 y = y.saturating_sub(1);
             }
-            KeyCode::Down => {
-                y = min(height.saturating_sub(1), y.saturating_add(1));
+            Direction::Down => {
+                y = y.saturating_add(1);
             }
-            KeyCode::Left => {
+            Direction::Left => {
                 x = x.saturating_sub(1);
             }
-            KeyCode::Right => {
-                x = min(width.saturating_sub(1), x.saturating_add(1));
-            }
-            KeyCode::PageUp => {
+            Direction::Right => x = x.saturating_add(1),
+            Direction::PageUp => {
                 y = 0;
             }
-            KeyCode::PageDown => {
+            Direction::PageDown => {
                 y = height.saturating_sub(1);
             }
-            KeyCode::Home => {
+            Direction::Home => {
                 x = 0;
             }
-            KeyCode::End => {
+            Direction::End => {
                 x = width.saturating_sub(1);
             }
-            _ => {}
         }
         self.location = Location { x, y };
+        self.scroll_location_into_view();
+    }
+    pub fn handle_command(&mut self, command: EditorCommand) {
+        match command {
+            EditorCommand::Quit => {}
+            EditorCommand::Move(direction) => self.move_text_location(&direction),
+            EditorCommand::Resize(size) => self.resize(size),
+        }
+    }
+    pub fn get_position(&self) -> Position {
+        self.location.subtract(&self.scroll_offset).into()
+    }
+    fn scroll_location_into_view(&mut self) {
+        let Location { x, y } = self.location;
+        let Size { width, height } = self.size;
+        let mut offset_changed = false;
+
+        // Scroll vertically
+        if y < self.scroll_offset.y {
+            self.scroll_offset.y = y;
+            offset_changed = true;
+        } else if y >= self.scroll_offset.y.saturating_add(height) {
+            self.scroll_offset.y = y.saturating_sub(height).saturating_add(1);
+            offset_changed = true;
+        }
+
+        //Scroll horizontally
+        if x < self.scroll_offset.x {
+            self.scroll_offset.x = x;
+            offset_changed = true;
+        } else if x >= self.scroll_offset.x.saturating_add(width) {
+            self.scroll_offset.x = x.saturating_sub(width).saturating_add(1);
+            offset_changed = true;
+        }
+        self.redraw = offset_changed;
     }
 }
