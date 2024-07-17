@@ -20,6 +20,15 @@ pub struct Position {
     pub row: usize,
 }
 
+impl Position {
+    pub fn saturating_sub(&self, other: Self) -> Self {
+        Self {
+            col: self.col.saturating_sub(other.col),
+            row: self.row.saturating_sub(other.row),
+        }
+    }
+}
+
 impl Terminal {
     pub fn initialize() -> Result<(), std::io::Error> {
         Self::enter_alternate_screen()?;

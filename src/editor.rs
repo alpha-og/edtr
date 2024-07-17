@@ -27,7 +27,7 @@ impl Editor {
 
         let args: Vec<String> = std::env::args().collect();
         if let Some(arg) = args.get(1) {
-            view.load(&arg.to_string())?;
+            view.load(&arg.to_string());
         }
         Ok(Self {
             view,
@@ -85,12 +85,8 @@ impl Editor {
     }
     fn refresh_screen(&mut self) {
         let _ = Terminal::hide_caret();
-        let _ = Terminal::move_caret_to(Default::default());
-        if self.should_quit {
-        } else {
-            let _ = self.view.render();
-            let _ = Terminal::move_caret_to(self.view.get_position());
-        }
+        let _ = self.view.render();
+        let _ = Terminal::move_caret_to(self.view.get_position());
         let _ = Terminal::show_caret();
         let _ = Terminal::flush_buffer();
     }

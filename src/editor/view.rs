@@ -5,7 +5,6 @@ mod location;
 use std::cmp::min;
 
 use buffer::Buffer;
-use line::Line;
 use location::Location;
 
 use super::{
@@ -47,7 +46,7 @@ impl View {
             if let Some(line) = self.buffer.lines.get(row.saturating_add(top)) {
                 let left = self.scroll_offset.x;
                 let right = self.scroll_offset.x.saturating_add(width);
-                Self::render_line(row, &line.get(left..right));
+                Self::render_line(row, &line.get_visible_graphemes(left..right));
             } else if self.buffer.is_empty() && row == height / 3 {
                 Self::render_line(row, &Self::generate_welcome_message(width));
             } else {
@@ -56,7 +55,7 @@ impl View {
         }
         self.redraw = false;
     }
-    fn render_line(row: usize, content: &str) {
+    pub fn render_line(row: usize, content: &str) {
         let result = Terminal::print_row(row, content);
         debug_assert!(result.is_ok(), "Failed to render line");
     }
@@ -85,7 +84,7 @@ impl View {
             Direction::Up => {
                 y = y.saturating_sub(1);
                 if let Some(line) = self.buffer.lines.get(y) {
-                    x = min(x, line.len().saturating_sub(1));
+                    x = min(x, line.width_until(line.grapheme_count()).saturating_sub(1));
                 }
             }
             Direction::Down => {
@@ -95,7 +94,7 @@ impl View {
                 } else {
                     y = y.saturating_add(1);
                     if let Some(line) = self.buffer.lines.get(y) {
-                        x = min(x, line.len().saturating_sub(1));
+                        x = min(x, line.width_until(line.grapheme_count()).saturating_sub(1));
                     }
                 }
             }
@@ -103,7 +102,7 @@ impl View {
                 if x == 0 {
                     if let Some(line) = self.buffer.lines.get(y - 1) {
                         y = y.saturating_sub(1);
-                        x = line.len().saturating_sub(1);
+                        x = line.width_until(line.grapheme_count()).saturating_sub(1);
                     }
                 } else {
                     x = x.saturating_sub(1);
@@ -111,11 +110,11 @@ impl View {
             }
             Direction::Right => {
                 if let Some(line) = self.buffer.lines.get(y) {
-                    if x >= line.len() {
+                    if x >= line.width_until(line.grapheme_count()) {
                         y = y.saturating_add(1);
                         x = 0;
                     } else {
-                        x = min(x.saturating_add(1), line.len());
+                        x = min(x.saturating_add(1), line.width_until(line.grapheme_count()));
                     }
                 } else {
                     x = 0;
@@ -124,7 +123,13 @@ impl View {
             Direction::PageUp => y = y.saturating_sub(height).saturating_sub(1),
             Direction::PageDown => y = y.saturating_add(height).saturating_sub(1),
             Direction::Home => x = 0,
-            Direction::End => x = self.buffer.lines.get(y).map_or(0, Line::len),
+            Direction::End => {
+                x = self
+                    .buffer
+                    .lines
+                    .get(y)
+                    .map_or(0, |line| line.width_until(line.grapheme_count()))
+            }
         }
         y = min(y, self.buffer.lines.len());
         self.location = Location { x, y };
