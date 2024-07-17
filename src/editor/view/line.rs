@@ -1,92 +1,81 @@
 use std::ops::Range;
-
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-#[derive(Copy, Clone)]
-enum GraphemeWidth {
+#[derive(Clone, Copy)]
+pub enum GraphemeWidth {
     Half,
     Full,
 }
 
-impl GraphemeWidth {
-    const fn saturating_add(self, other: usize) -> usize {
-        match self {
-            Self::Half => other.saturating_add(1),
-            Self::Full => other.saturating_add(2),
-        }
-    }
-}
-
-struct TextFragment {
-    grapheme: String,
-    rendered_width: GraphemeWidth,
+pub struct Grapheme {
+    content: String,
+    width: GraphemeWidth,
     replacement: Option<char>,
 }
 
 pub struct Line {
-    fragments: Vec<TextFragment>,
+    graphemes: Vec<Grapheme>,
 }
 
 impl Line {
-    pub fn from(line_str: &str) -> Self {
-        let fragments = line_str
+    pub fn from(text: &str) -> Self {
+        let graphemes: Vec<Grapheme> = text
             .graphemes(true)
-            .map(|grapheme| {
-                let unicode_width = grapheme.width();
-                let rendered_width = match unicode_width {
+            .map(|grapheme| Grapheme {
+                content: grapheme.to_string(),
+                width: match grapheme.width() {
                     0 | 1 => GraphemeWidth::Half,
                     _ => GraphemeWidth::Full,
-                };
-                let replacement = match unicode_width {
+                },
+                replacement: match grapheme.width() {
                     0 => Some('·'),
                     _ => None,
-                };
-
-                TextFragment {
-                    grapheme: grapheme.to_string(),
-                    rendered_width,
-                    replacement,
-                }
+                },
             })
             .collect();
-        Self { fragments }
+        Self { graphemes }
     }
-
     pub fn get_visible_graphemes(&self, range: Range<usize>) -> String {
+        let mut visible_graphemes = String::new();
+
         if range.start >= range.end {
-            return String::new();
+            return visible_graphemes;
         }
-        let mut result = String::new();
-        let mut current_pos = 0;
-        for fragment in &self.fragments {
-            let fragment_end = fragment.rendered_width.saturating_add(current_pos);
-            if current_pos >= range.end {
+
+        let mut current_position: usize = 0;
+
+        for grapheme in &self.graphemes {
+            let grapheme_width = match grapheme.width {
+                GraphemeWidth::Half => 1,
+                GraphemeWidth::Full => 2,
+            };
+            let grapheme_end = current_position.saturating_add(grapheme_width);
+
+            if current_position >= range.end {
                 break;
             }
-            if fragment_end > range.start {
-                if fragment_end > range.end || current_pos < range.start {
-                    // Clip on the right or left
-                    result.push('⋯');
-                } else if let Some(char) = fragment.replacement {
-                    result.push(char);
+            if grapheme_end > range.start {
+                if current_position < range.start || grapheme_end > range.end {
+                    visible_graphemes.push_str("⋯");
+                } else if let Some(char) = grapheme.replacement {
+                    visible_graphemes.push(char);
                 } else {
-                    result.push_str(&fragment.grapheme);
+                    visible_graphemes.push_str(&grapheme.content);
                 }
             }
-            current_pos = fragment_end;
+            current_position = grapheme_end;
         }
-        result
+        visible_graphemes
     }
-
     pub fn grapheme_count(&self) -> usize {
-        self.fragments.len()
+        self.graphemes.len()
     }
     pub fn width_until(&self, grapheme_index: usize) -> usize {
-        self.fragments
+        self.graphemes
             .iter()
             .take(grapheme_index)
-            .map(|fragment| match fragment.rendered_width {
+            .map(|grapheme| match grapheme.width {
                 GraphemeWidth::Half => 1,
                 GraphemeWidth::Full => 2,
             })
